@@ -2,6 +2,10 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.expressions.Window
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.spark.sql.DataFrame
+import Logging.Connexion
+
+
+
 
 
 object Processing {
@@ -11,6 +15,9 @@ object Processing {
   /* Exercise 1: What is the average revenue of the orders? */
   /* Exercise 2 : For each seller, the average % contribution of an order to the seller's daily quota */
 
+  val connex = new Connexion
+  val spark = connex.getSparkSession
+  import spark.implicits._
   case class Exploration(products: DataFrame, sellers: DataFrame, sales: DataFrame) {
     def totalProducts: Long = products.select("product_id").distinct().count()
 
@@ -63,7 +70,7 @@ object Processing {
   /* Exercise 3: the 2nd most selling and the least selling persons for each product:
   those for product with product_id=0
    */
-   class Ranking(products: DataFrame, sellers: DataFrame, sales: DataFrame, prod_name: String = "product_0"){
+  class Ranking(products: DataFrame, sellers: DataFrame, sales: DataFrame, prod_name: String = "product_0"){
     def mostAndLeastSeller: String = {
       val saleProductSeller = sales.join(products, "product_id")
         .where(s"product_name = '$prod_name'")
@@ -99,5 +106,45 @@ object Processing {
 
   }
 
+  case class Sold(seller: List[String], date: List[String], quantity: Double, totalPrice: Double)
+  case class Product(name: String, price: Double, sold: Sold)
+  class Transaction(products:DataFrame,sellers:DataFrame,sales:DataFrame) {
+    val transac: DataFrame = sales.select("product_id","seller_id","date","num_pieces_sold")
+      .join(products,"product_id").join(sellers,"seller_id")
+      .select(col("product_name"),col("price"),col("seller_name"),col("date"),
+        col("num_pieces_sold").cast("Double"))
+      .groupBy("product_name","seller_name","date","price").sum("num_pieces_sold")
+      .withColumnRenamed("sum(num_pieces_sold)","quantity")
+      .groupBy("product_name")
+      .agg(
+        collect_set("seller_name").alias("seller_names"),
+        collect_set("date").alias("dates"),
+        avg("price").alias("price"),
+        sum("quantity").alias("quantity")
+      )
+      .withColumn("total_price", expr("price * quantity"))
+
+    val transacMap = transac
+      .map(row =>
+        Product(
+          row.getAs[String]("product_name"),
+          row.getAs[Double]("price"),
+          Sold(
+            row.getAs[Seq[String]]("seller_names").toList,
+            row.getAs[Seq[String]]("dates").toList,
+            row.getAs[Double]("quantity"),
+            row.getAs[Double]("total_price")
+          )
+        )
+      )
+      .collect()
+      .toList
+    val transactions = Map("transaction" -> Map("product" -> transacMap))
+    println(transactions)
+
+
+  }
+
 
 }
+
